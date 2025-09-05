@@ -1,6 +1,6 @@
 # IAM role for Lambda function
 resource "aws_iam_role" "lambda_role" {
-  name = "resume-auto-lambda-role-${var.environment}"
+  name = "${var.function_name}-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -16,15 +16,9 @@ resource "aws_iam_role" "lambda_role" {
   })
 }
 
-# IAM policy attachment for basic Lambda execution
-resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
-  role       = aws_iam_role.lambda_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-# Additional IAM policy for Lambda (customize based on your needs)
+# IAM policy for Lambda function
 resource "aws_iam_role_policy" "lambda_policy" {
-  name = "resume-auto-lambda-policy-${var.environment}"
+  name = "${var.function_name}-policy"
   role = aws_iam_role.lambda_role.id
 
   policy = jsonencode({
@@ -33,9 +27,37 @@ resource "aws_iam_role_policy" "lambda_policy" {
       {
         Effect = "Allow"
         Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:*:*:*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "s3:GetObject",
           "s3:PutObject",
           "s3:DeleteObject"
+        ]
+        Resource = [
+          "arn:aws:s3:::resume-auto-uploads-${var.environment}/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket"
+        ]
+        Resource = [
+          "arn:aws:s3:::resume-auto-uploads-${var.environment}"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "textract:DetectDocumentText",
+          "textract:AnalyzeDocument"
         ]
         Resource = "*"
       }
@@ -43,18 +65,37 @@ resource "aws_iam_role_policy" "lambda_policy" {
   })
 }
 
+# S3 bucket for file uploads
+resource "aws_s3_bucket" "uploads" {
+  bucket = "resume-auto-uploads-${var.environment}"
+}
+
+resource "aws_s3_bucket_versioning" "uploads" {
+  bucket = aws_s3_bucket.uploads.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "uploads" {
+  bucket = aws_s3_bucket.uploads.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
 # Lambda function
 resource "aws_lambda_function" "backend" {
-  function_name = var.function_name
-  role         = aws_iam_role.lambda_role.arn
-  handler      = "lambda_function.lambda_handler"
-  runtime      = "python3.9"
-  timeout      = 30
-  memory_size  = 128
-
-  # Placeholder code - will be updated by CI/CD
-  filename         = "lambda_placeholder.zip"
-  source_code_hash = data.archive_file.lambda_placeholder.output_base64sha256
+  filename         = "lambda-deployment.zip"
+  function_name    = var.function_name
+  role            = aws_iam_role.lambda_role.arn
+  handler         = "lambda_function.lambda_handler"
+  runtime         = "python3.9"
+  timeout         = 30
+  memory_size     = 256
 
   environment {
     variables = {
@@ -62,28 +103,17 @@ resource "aws_lambda_function" "backend" {
     }
   }
 
-  depends_on = [aws_iam_role_policy_attachment.lambda_basic_execution]
-}
+  depends_on = [
+    aws_iam_role_policy.lambda_policy,
+  ]
 
-# Create a placeholder zip file
-data "archive_file" "lambda_placeholder" {
-  type        = "zip"
-  output_path = "lambda_placeholder.zip"
-  
-  source {
-    content  = <<EOF
-def lambda_handler(event, context):
-    return {
-        'statusCode': 200,
-        'headers': {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-        },
-        'body': '{"message": "Hello from Lambda placeholder!"}'
-    }
-EOF
-    filename = "lambda_function.py"
+  # This will be updated by the GitHub Actions workflow
+  lifecycle {
+    ignore_changes = [
+      filename,
+      last_modified,
+      source_code_hash,
+    ]
   }
 }
 
@@ -91,13 +121,20 @@ EOF
 resource "aws_lambda_function_url" "backend_url" {
   function_name      = aws_lambda_function.backend.function_name
   authorization_type = "NONE"
+  invoke_mode       = "BUFFERED"
 
   cors {
     allow_credentials = false
+    allow_headers     = ["authorization", "content-type", "date", "keep-alive", "x-requested-with"]
+    allow_methods     = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
     allow_origins     = ["*"]
-    allow_methods     = ["GET", "HEAD"]
-    allow_headers     = ["date", "keep-alive", "content-type", "authorization"]
     expose_headers    = ["date", "keep-alive"]
     max_age          = 86400
   }
+}
+
+# CloudWatch Log Group
+resource "aws_cloudwatch_log_group" "lambda_logs" {
+  name              = "/aws/lambda/${var.function_name}"
+  retention_in_days = 14
 }
