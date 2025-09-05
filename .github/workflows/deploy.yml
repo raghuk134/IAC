@@ -2,9 +2,9 @@ name: Deploy Frontend and Backend to AWS
 
 on:
   push:
-    branches: [ main, develop ]  # Updated to use main branch
+    branches: [ master, develop ]  # Updated to use main branch
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
   workflow_dispatch:  # This allows manual triggering
 
 env:
