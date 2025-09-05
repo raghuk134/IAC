@@ -89,13 +89,14 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "uploads" {
 
 # Lambda function
 resource "aws_lambda_function" "backend" {
-  filename         = "lambda-deployment.zip"
+  filename         = "${path.module}/lambda-deployment.zip"
   function_name    = var.function_name
   role            = aws_iam_role.lambda_role.arn
   handler         = "lambda_function.lambda_handler"
   runtime         = "python3.9"
   timeout         = 30
   memory_size     = 256
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
 
   environment {
     variables = {
@@ -105,15 +106,8 @@ resource "aws_lambda_function" "backend" {
 
   depends_on = [
     aws_iam_role_policy.lambda_policy,
+    data.archive_file.lambda_zip,
   ]
-
-  # This will be updated by the GitHub Actions workflow
-  lifecycle {
-    ignore_changes = [
-      filename,
-      source_code_hash,
-    ]
-  }
 }
 
 # Lambda function URL
@@ -136,4 +130,27 @@ resource "aws_lambda_function_url" "backend_url" {
 resource "aws_cloudwatch_log_group" "lambda_logs" {
   name              = "/aws/lambda/${var.function_name}"
   retention_in_days = 14
+}
+
+# Create a dummy Lambda function for initial deployment
+data "archive_file" "lambda_zip" {
+  type        = "zip"
+  output_path = "${path.module}/lambda-deployment.zip"
+  source {
+    content  = <<EOF
+import json
+
+def lambda_handler(event, context):
+    return {
+        'statusCode': 200,
+        'headers': {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+        },
+        'body': json.dumps({'message': 'Initial deployment - will be updated by CI/CD'})
+    }
+EOF
+    filename = "lambda_function.py"
+  }
 }

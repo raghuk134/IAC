@@ -130,9 +130,16 @@ jobs:
           echo "Error: Lambda function name is empty"
           exit 1
         fi
+        
+        # Wait a moment for Lambda function to be ready
+        sleep 10
+        
         aws lambda update-function-code \
           --function-name ${{ needs.terraform-plan.outputs.lambda-function-name }} \
           --zip-file fileb://lambda-deployment.zip
+        
+        # Verify the update was successful
+        aws lambda get-function --function-name ${{ needs.terraform-plan.outputs.lambda-function-name }}
 
   build-frontend:
     name: Build and Deploy Frontend
