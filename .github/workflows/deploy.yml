@@ -19,15 +19,29 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       lambda-url: ${{ steps.terraform-output.outputs.lambda-url }}
+      lambda-function-name: ${{ steps.terraform-output.outputs.lambda-function-name }}
+      s3-bucket-name: ${{ steps.terraform-output.outputs.s3-bucket-name }}
+      cloudfront-distribution-id: ${{ steps.terraform-output.outputs.cloudfront-distribution-id }}
+      environment: ${{ steps.set-env.outputs.environment }}
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
+    - name: Set Environment
+      id: set-env
+      run: |
+        if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+          echo "environment=prod" >> $GITHUB_OUTPUT
+        else
+          echo "environment=dev" >> $GITHUB_OUTPUT
+        fi
+
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
       with:
         terraform_version: ${{ env.TERRAFORM_VERSION }}
+        terraform_wrapper: false
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
@@ -47,23 +61,24 @@ jobs:
     - name: Terraform Plan
       working-directory: ./terraform
       run: |
-        ENV=${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
-        echo "ENVIRONMENT=$ENV" >> $GITHUB_ENV
-        terraform plan -var="environment=$ENV"
+        terraform plan -var="environment=${{ steps.set-env.outputs.environment }}"
 
     - name: Terraform Apply
-      if: github.ref == 'refs/heads/main'
       working-directory: ./terraform
-      run: terraform apply -auto-approve -var="environment=$ENVIRONMENT"
+      run: terraform apply -auto-approve -var="environment=${{ steps.set-env.outputs.environment }}"
 
     - name: Get Terraform Outputs
       id: terraform-output
       working-directory: ./terraform
       run: |
-        echo "lambda-url=$(terraform output -raw lambda_function_url)" >> $GITHUB_OUTPUT
-        echo "lambda-function-name=$(terraform output -raw lambda_function_name)" >> $GITHUB_OUTPUT
-        echo "s3-bucket-name=$(terraform output -raw s3_bucket_name)" >> $GITHUB_OUTPUT
-        echo "cloudfront-distribution-id=$(terraform output -raw cloudfront_distribution_id)" >> $GITHUB_OUTPUT
+        echo "lambda-url=$(terraform output -raw lambda_function_url 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
+        echo "lambda-function-name=$(terraform output -raw lambda_function_name 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
+        echo "s3-bucket-name=$(terraform output -raw s3_bucket_name 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
+        echo "cloudfront-distribution-id=$(terraform output -raw cloudfront_distribution_id 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
+        
+        # Debug outputs
+        echo "Debug: Lambda URL = $(terraform output -raw lambda_function_url 2>/dev/null || echo 'NOT_FOUND')"
+        echo "Debug: Lambda Function Name = $(terraform output -raw lambda_function_name 2>/dev/null || echo 'NOT_FOUND')"
 
   build-backend:
     name: Build and Deploy Backend
@@ -110,6 +125,11 @@ jobs:
     - name: Deploy to Lambda
       working-directory: ./backend
       run: |
+        echo "Debug: Function name from output = '${{ needs.terraform-plan.outputs.lambda-function-name }}'"
+        if [ -z "${{ needs.terraform-plan.outputs.lambda-function-name }}" ]; then
+          echo "Error: Lambda function name is empty"
+          exit 1
+        fi
         aws lambda update-function-code \
           --function-name ${{ needs.terraform-plan.outputs.lambda-function-name }} \
           --zip-file fileb://lambda-deployment.zip
@@ -132,9 +152,14 @@ jobs:
       run: npm ci
 
     - name: Update API URL
-      working-directory: ./src
       run: |
-        sed -i "s|process.env.REACT_APP_API_URL \|\| 'http://localhost:5000'|'${{ needs.terraform-plan.outputs.lambda-url }}'|g" fileupload.js
+        echo "Debug: Lambda URL from output = '${{ needs.terraform-plan.outputs.lambda-url }}'"
+        if [ -f "src/fileupload.js" ]; then
+          sed -i "s|process.env.REACT_APP_API_URL \|\| 'http://localhost:5000'|'${{ needs.terraform-plan.outputs.lambda-url }}'|g" src/fileupload.js
+        fi
+        if [ -f "frontend/src/fileupload.js" ]; then
+          sed -i "s|process.env.REACT_APP_API_URL \|\| 'http://localhost:5000'|'${{ needs.terraform-plan.outputs.lambda-url }}'|g" frontend/src/fileupload.js
+        fi
 
     - name: Build application
       env:
@@ -153,10 +178,20 @@ jobs:
 
     - name: Deploy to S3
       run: |
+        echo "Debug: S3 bucket name = '${{ needs.terraform-plan.outputs.s3-bucket-name }}'"
+        if [ -z "${{ needs.terraform-plan.outputs.s3-bucket-name }}" ]; then
+          echo "Error: S3 bucket name is empty"
+          exit 1
+        fi
         aws s3 sync dist/ s3://${{ needs.terraform-plan.outputs.s3-bucket-name }}/ --delete
 
     - name: Invalidate CloudFront
       run: |
+        echo "Debug: CloudFront distribution ID = '${{ needs.terraform-plan.outputs.cloudfront-distribution-id }}'"
+        if [ -z "${{ needs.terraform-plan.outputs.cloudfront-distribution-id }}" ]; then
+          echo "Error: CloudFront distribution ID is empty"
+          exit 1
+        fi
 
   post-deployment:
     name: Post Deployment Tasks
