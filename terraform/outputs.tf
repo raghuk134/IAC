@@ -23,6 +23,11 @@ output "lambda_function_arn" {
   value       = module.lambda.lambda_function_arn
 }
 
+output "lambda_function_name" {
+  description = "Lambda function name"
+  value       = module.lambda.lambda_function_name
+}
+
 output "api_gateway_url" {
   description = "API Gateway URL"
   value       = module.api_gateway.api_gateway_url

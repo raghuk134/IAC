@@ -2,9 +2,9 @@ name: Deploy Frontend and Backend to AWS
 
 on:
   push:
-    branches: [ master, develop ]  # Change to master if that's your default branch
+    branches: [ main, develop ]  # Updated to use main branch
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
   workflow_dispatch:  # This allows manual triggering
 
 env:
@@ -46,18 +46,24 @@ jobs:
 
     - name: Terraform Plan
       working-directory: ./terraform
-      run: terraform plan -var="environment=${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}"
+      run: |
+        ENV=${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
+        echo "ENVIRONMENT=$ENV" >> $GITHUB_ENV
+        terraform plan -var="environment=$ENV"
 
     - name: Terraform Apply
       if: github.ref == 'refs/heads/main'
       working-directory: ./terraform
-      run: terraform apply -auto-approve -var="environment=${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}"
+      run: terraform apply -auto-approve -var="environment=$ENVIRONMENT"
 
     - name: Get Terraform Outputs
       id: terraform-output
       working-directory: ./terraform
       run: |
         echo "lambda-url=$(terraform output -raw lambda_function_url)" >> $GITHUB_OUTPUT
+        echo "lambda-function-name=$(terraform output -raw lambda_function_name)" >> $GITHUB_OUTPUT
+        echo "s3-bucket-name=$(terraform output -raw s3_bucket_name)" >> $GITHUB_OUTPUT
+        echo "cloudfront-distribution-id=$(terraform output -raw cloudfront_distribution_id)" >> $GITHUB_OUTPUT
 
   build-backend:
     name: Build and Deploy Backend
@@ -105,7 +111,7 @@ jobs:
       working-directory: ./backend
       run: |
         aws lambda update-function-code \
-          --function-name resume-auto-backend-${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }} \
+          --function-name ${{ needs.terraform-plan.outputs.lambda-function-name }} \
           --zip-file fileb://lambda-deployment.zip
 
   build-frontend:
@@ -147,11 +153,10 @@ jobs:
 
     - name: Deploy to S3
       run: |
+        aws s3 sync dist/ s3://${{ needs.terraform-plan.outputs.s3-bucket-name }}/ --delete
 
     - name: Invalidate CloudFront
       run: |
-        DISTRIBUTION_ID=$(aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='resume-auto-${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}'].Id" --output text)
-        aws cloudfront create-invalidation --distribution-id $DISTRIBUTION_ID --paths "/*"
 
   post-deployment:
     name: Post Deployment Tasks
