@@ -2,9 +2,10 @@ name: Deploy Frontend and Backend to AWS
 
 on:
   push:
-    branches: [ master, develop ]
+    branches: [ master, develop ]  # Change to master if that's your default branch
   pull_request:
     branches: [ master ]
+  workflow_dispatch:  # This allows manual triggering
 
 env:
   AWS_REGION: us-east-1
@@ -45,12 +46,12 @@ jobs:
 
     - name: Terraform Plan
       working-directory: ./terraform
-      run: terraform plan -var="environment=${{ github.ref == 'refs/heads/master' && 'prod' || 'dev' }}"
+      run: terraform plan -var="environment=${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}"
 
     - name: Terraform Apply
-      if: github.ref == 'refs/heads/master'
+      if: github.ref == 'refs/heads/main'
       working-directory: ./terraform
-      run: terraform apply -auto-approve -var="environment=${{ github.ref == 'refs/heads/master' && 'prod' || 'dev' }}"
+      run: terraform apply -auto-approve -var="environment=${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}"
 
     - name: Get Terraform Outputs
       id: terraform-output
@@ -104,7 +105,7 @@ jobs:
       working-directory: ./backend
       run: |
         aws lambda update-function-code \
-          --function-name resume-auto-backend-${{ github.ref == 'refs/heads/master' && 'prod' || 'dev' }} \
+          --function-name resume-auto-backend-${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }} \
           --zip-file fileb://lambda-deployment.zip
 
   build-frontend:
@@ -120,26 +121,21 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: ${{ env.NODE_VERSION }}
-        cache: 'npm'
-        cache-dependency-path: /package-lock.json
 
     - name: Install dependencies
-      working-directory: 
       run: npm ci
 
     - name: Update API URL
-      working-directory:  /src
+      working-directory: ./src
       run: |
         sed -i "s|process.env.REACT_APP_API_URL \|\| 'http://localhost:5000'|'${{ needs.terraform-plan.outputs.lambda-url }}'|g" fileupload.js
 
     - name: Build application
-      working-directory: 
       env:
         REACT_APP_API_URL: ${{ needs.terraform-plan.outputs.lambda-url }}
       run: npm run build
 
     - name: Run tests
-      working-directory: 
       run: npm test -- --coverage --passWithNoTests
 
     - name: Configure AWS credentials
@@ -150,13 +146,11 @@ jobs:
         aws-region: ${{ env.AWS_REGION }}
 
     - name: Deploy to S3
-      working-directory: 
       run: |
-        aws s3 sync build/ s3://resume-auto-frontend-${{ github.ref == 'refs/heads/master' && 'prod' || 'dev' }} --delete
 
     - name: Invalidate CloudFront
       run: |
-        DISTRIBUTION_ID=$(aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='resume-auto-${{ github.ref == 'refs/heads/master' && 'prod' || 'dev' }}'].Id" --output text)
+        DISTRIBUTION_ID=$(aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='resume-auto-${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}'].Id" --output text)
         aws cloudfront create-invalidation --distribution-id $DISTRIBUTION_ID --paths "/*"
 
   post-deployment:
