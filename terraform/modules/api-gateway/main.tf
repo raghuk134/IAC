@@ -39,8 +39,11 @@ resource "aws_api_gateway_integration" "lambda_integration" {
 
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
-  uri                     = aws_lambda_permission.api_gateway.source_arn
+  uri                     = "arn:aws:apigateway:${data.aws_region.current.name}:lambda:path/2015-03-31/functions/${var.lambda_function_arn}/invocations"
 }
+
+# Data source for current region
+data "aws_region" "current" {}
 
 # Lambda permission for API Gateway
 resource "aws_lambda_permission" "api_gateway" {

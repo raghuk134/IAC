@@ -111,7 +111,6 @@ resource "aws_lambda_function" "backend" {
   lifecycle {
     ignore_changes = [
       filename,
-      last_modified,
       source_code_hash,
     ]
   }
@@ -125,10 +124,10 @@ resource "aws_lambda_function_url" "backend_url" {
 
   cors {
     allow_credentials = false
-    allow_headers     = ["authorization", "content-type", "date", "keep-alive", "x-requested-with"]
-    allow_methods     = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    allow_headers     = ["content-type", "x-amz-date", "authorization", "x-api-key", "x-amz-security-token"]
+    allow_methods     = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
     allow_origins     = ["*"]
-    expose_headers    = ["date", "keep-alive"]
+    expose_headers    = ["date"]
     max_age          = 86400
   }
 }
