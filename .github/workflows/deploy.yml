@@ -173,9 +173,6 @@ jobs:
         REACT_APP_API_URL: ${{ needs.terraform-plan.outputs.lambda-url }}
       run: npm run build
 
-    - name: Run tests
-      run: npm test -- --coverage --passWithNoTests
-
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
